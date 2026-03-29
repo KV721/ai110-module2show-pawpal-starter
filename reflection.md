@@ -4,8 +4,67 @@
 
 **a. Initial design**
 
+PawPal+ supports three core user actions:
+
+1. **Enter owner and pet info** — The user provides basic details such as their name, their pet's name, and the pet's species. This information personalizes the planning experience and allows the system to apply relevant defaults or constraints (e.g., species-specific care needs).
+
+2. **Add and manage care tasks** — The user defines the tasks that need to happen during the day (e.g., morning walk, feeding, medication, grooming). Each task has a title, an estimated duration in minutes, and a priority level (low, medium, or high). Users can add multiple tasks and edit or remove them as needed.
+
+3. **Generate a daily schedule** — The user triggers the scheduler, which selects and orders tasks based on the owner's available time and each task's priority. The system produces a plan for the day and explains its reasoning — why each task was included, skipped, or placed at a particular time.
+
 - Briefly describe your initial UML design.
 - What classes did you include, and what responsibilities did you assign to each?
+
+**UML Class Diagram (draft)**
+
+```mermaid
+classDiagram
+    class Owner {
+        +str name
+        +int available_minutes
+        +str preferences
+        +get_available_time() int
+    }
+
+    class Pet {
+        +str name
+        +str species
+        +int age
+        +get_label() str
+    }
+
+    class Task {
+        +str title
+        +int duration_minutes
+        +str priority
+        +str notes
+        +fits_within(budget_minutes: int) bool
+    }
+
+    class Scheduler {
+        +Owner owner
+        +Pet pet
+        +list~Task~ tasks
+        +generate_schedule() DailyPlan
+        +_filter_by_priority() list~Task~
+        +_fits_in_time(tasks: list, budget: int) list~Task~
+    }
+
+    class DailyPlan {
+        +list~Task~ scheduled_tasks
+        +int total_duration_minutes
+        +list~str~ reasoning
+        +display() str
+        +explain() str
+    }
+
+    Owner "1" --> "1..*" Pet : owns
+    Scheduler --> Owner : uses
+    Scheduler --> Pet : uses
+    Scheduler --> "0..*" Task : selects from
+    Scheduler --> DailyPlan : produces
+    DailyPlan --> "0..*" Task : contains
+```
 
 **b. Design changes**
 
