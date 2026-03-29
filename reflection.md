@@ -71,6 +71,16 @@ classDiagram
 - Did your design change during implementation?
 - If yes, describe at least one change and why you made it.
 
+Four changes were made after reviewing the initial UML against the skeleton for correctness and completeness:
+
+1. **Added a `Priority` enum (replaces raw string)** — The initial design used a plain string (`"low"`, `"medium"`, `"high"`) for `Task.priority`. Strings don't sort naturally in priority order (`"high" < "low" < "medium"` alphabetically), which would silently produce wrong results in `_filter_by_priority`. Replacing it with a `Priority(Enum)` with integer values (LOW=1, MEDIUM=2, HIGH=3) makes sorting unambiguous and prevents invalid values from being passed in.
+
+2. **Added `pet` attribute to `Owner`** — The UML showed an `Owner "1" --> "1..*" Pet` relationship, but the skeleton had no `pet` field on `Owner`. Without it, the only way to get from an owner to their pet was through `Scheduler`, which shouldn't be the sole path. Adding `pet: Optional[Pet]` to `Owner` closes this gap.
+
+3. **Added `skipped_tasks` and `skipped_reasons` to `DailyPlan`** — The original design stated the plan should explain why tasks were skipped, but `DailyPlan` only stored `scheduled_tasks`. There was no structure to hold tasks that didn't make the cut. Adding `skipped_tasks: list[Task]` and `skipped_reasons: list[str]` gives `explain()` the data it needs to produce a complete explanation.
+
+4. **Clarified that `Scheduler.generate_schedule` owns reasoning population** — It was ambiguous whether `Scheduler` or `DailyPlan.explain()` was responsible for generating the reasoning strings. The docstring now explicitly states that `generate_schedule` builds and writes reasoning for both included and skipped tasks into `DailyPlan`, making the responsibility clear before implementation begins.
+
 ---
 
 ## 2. Scheduling Logic and Tradeoffs
