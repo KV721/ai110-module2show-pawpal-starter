@@ -44,6 +44,7 @@ if submitted:
 if st.session_state.owner:
     owner = st.session_state.owner
     scheduler = Scheduler(owner=owner)
+    pet_names = [p.name for p in owner.pets]
 
     # -----------------------------------------------------------------------
     # Section 2 — Add more pets
@@ -67,7 +68,6 @@ if st.session_state.owner:
     # Section 3 — Add a task
     # -----------------------------------------------------------------------
     st.header("3. Add a Task")
-    pet_names = [p.name for p in owner.pets]
 
     with st.form("task_form"):
         target_pet = st.selectbox("Assign to pet", pet_names)
@@ -94,8 +94,10 @@ if st.session_state.owner:
 
     # -----------------------------------------------------------------------
     # Section 4 — Filter & view tasks
+    # Uses scheduler.filter_tasks() which sorts by start_time via lambda
     # -----------------------------------------------------------------------
     st.header("4. View & Filter Tasks")
+
     col1, col2 = st.columns(2)
     with col1:
         filter_pet = st.selectbox("Filter by pet", ["All"] + pet_names, key="filter_pet")
@@ -105,28 +107,31 @@ if st.session_state.owner:
         )
 
     pet_name_arg = None if filter_pet == "All" else filter_pet
-    completed_arg = None
-    if filter_status == "Pending":
-        completed_arg = False
-    elif filter_status == "Completed":
-        completed_arg = True
+    completed_arg = {"Pending": False, "Completed": True}.get(filter_status)
 
-    # filter_tasks() uses a lambda to sort results by start_time "HH:MM"
+    # filter_tasks() internally sorts by start_time "HH:MM" using a lambda key
     filtered = scheduler.filter_tasks(pet_name=pet_name_arg, completed=completed_arg)
 
     if filtered:
-        st.table([
-            {
-                "Pet": next((p.name for p in owner.pets if task in p.tasks), "?"),
-                "Start": task.start_time or "—",
-                "Task": task.title,
-                "Duration (min)": task.duration_minutes,
-                "Priority": task.priority.name,
-                "Frequency": task.frequency,
-                "Done": task.completed,
-            }
-            for task in filtered
-        ])
+        # Map priority name → coloured badge text for readability
+        priority_badge = {"HIGH": "🔴 HIGH", "MEDIUM": "🟡 MEDIUM", "LOW": "🟢 LOW"}
+        st.dataframe(
+            [
+                {
+                    "Pet": next((p.name for p in owner.pets if task in p.tasks), "?"),
+                    "Start": task.start_time or "—",
+                    "Task": task.title,
+                    "Mins": task.duration_minutes,
+                    "Priority": priority_badge.get(task.priority.name, task.priority.name),
+                    "Frequency": task.frequency,
+                    "Done": "✅" if task.completed else "⬜",
+                }
+                for task in filtered
+            ],
+            use_container_width=True,
+            hide_index=True,
+        )
+        st.caption(f"{len(filtered)} task(s) shown")
     else:
         st.info("No tasks match the selected filters.")
 
@@ -135,6 +140,7 @@ if st.session_state.owner:
     # -----------------------------------------------------------------------
     st.header("5. Mark Task Complete")
     incomplete = [t for t in owner.get_all_tasks() if not t.completed]
+
     if incomplete:
         with st.form("complete_form"):
             task_to_complete = st.selectbox(
@@ -143,33 +149,93 @@ if st.session_state.owner:
             complete_btn = st.form_submit_button("Mark complete")
 
         if complete_btn:
+            # scheduler.mark_task_complete() handles recurring logic via timedelta
             next_occurrence = scheduler.mark_task_complete(task_to_complete)
-            st.success(f"'{task_to_complete}' marked complete.")
+            st.success(f"'{task_to_complete}' marked as complete.")
             if next_occurrence:
                 st.info(
-                    f"Recurring task detected — next occurrence of "
-                    f"'{next_occurrence.title}' added for {next_occurrence.due_date}."
+                    f"**Recurring task** — next occurrence of "
+                    f"**'{next_occurrence.title}'** has been scheduled for "
+                    f"**{next_occurrence.due_date}**."
                 )
     else:
-        st.info("All tasks are complete!")
+        st.success("All of today's tasks are done!")
 
     # -----------------------------------------------------------------------
     # Section 6 — Generate schedule
+    # Uses scheduler.generate_schedule() → DailyPlan with sorted tasks +
+    # conflict warnings surfaced as actionable st.warning cards.
     # -----------------------------------------------------------------------
     st.header("6. Generate Today's Schedule")
-    start_hour = st.text_input("Schedule start time (HH:MM)", value="08:00")
-    st.caption(f"Budget: {owner.available_minutes} min | Preferences: {owner.preferences or 'none'}")
 
-    if st.button("Generate schedule"):
+    col_time, col_info = st.columns([1, 2])
+    with col_time:
+        start_hour = st.text_input("Start time (HH:MM)", value="08:00")
+    with col_info:
+        st.caption(
+            f"Time budget: **{owner.available_minutes} min**  \n"
+            f"Preferences: *{owner.preferences or 'none'}*"
+        )
+
+    if st.button("Generate schedule", type="primary"):
         if not owner.get_all_tasks():
             st.warning("Add at least one task before generating a schedule.")
         else:
             plan = scheduler.generate_schedule(start_time=start_hour)
-            st.subheader("Today's Plan")
-            st.text(plan.display())
-            with st.expander("Why this plan?"):
-                st.text(plan.explain())
+
+            # ── Conflict banner ──────────────────────────────────────────
+            # Shown at the top so the owner sees problems before the plan.
+            # Each conflict gets its own card with the affected task names
+            # and their time windows so the owner knows exactly what to fix.
             if plan.conflicts:
-                st.error("Scheduling conflicts detected:")
-                for c in plan.conflicts:
-                    st.warning(c)
+                st.error(
+                    f"⚠️ {len(plan.conflicts)} scheduling conflict(s) detected. "
+                    "Review the warnings below before following this plan."
+                )
+                for conflict in plan.conflicts:
+                    st.warning(f"**Conflict:** {conflict}")
+                st.divider()
+
+            # ── Scheduled tasks table ────────────────────────────────────
+            if plan.scheduled_tasks:
+                st.subheader(
+                    f"Today's Plan — {plan.total_duration_minutes} min "
+                    f"of {owner.available_minutes} min used"
+                )
+                priority_badge = {"HIGH": "🔴 HIGH", "MEDIUM": "🟡 MEDIUM", "LOW": "🟢 LOW"}
+                st.dataframe(
+                    [
+                        {
+                            "Time": t.start_time or "—",
+                            "Task": t.title,
+                            "Description": t.description,
+                            "Duration (min)": t.duration_minutes,
+                            "Priority": priority_badge.get(t.priority.name, t.priority.name),
+                            "Frequency": t.frequency,
+                        }
+                        for t in plan.scheduled_tasks   # already sorted by start_time
+                    ],
+                    use_container_width=True,
+                    hide_index=True,
+                )
+            else:
+                st.info("No tasks fit within today's time budget.")
+
+            # ── Skipped tasks ────────────────────────────────────────────
+            if plan.skipped_tasks:
+                with st.expander(f"⏭ {len(plan.skipped_tasks)} task(s) skipped (not enough time)"):
+                    for task in plan.skipped_tasks:
+                        st.warning(
+                            f"**{task.title}** ({task.duration_minutes} min, "
+                            f"{task.priority.name}) — didn't fit in remaining budget."
+                        )
+
+            # ── Reasoning expander ───────────────────────────────────────
+            with st.expander("Why was the plan built this way?"):
+                st.markdown("**Included tasks**")
+                for r in plan.reasoning:
+                    st.markdown(f"- {r}")
+                if plan.skipped_reasons:
+                    st.markdown("**Skipped tasks**")
+                    for r in plan.skipped_reasons:
+                        st.markdown(f"- {r}")
